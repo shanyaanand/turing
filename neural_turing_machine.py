@@ -37,7 +37,7 @@ import torch.nn.functional as F
 
 # Default values for program arguments
 RANDOM_SEED = 1000
-REPORT_INTERVAL = 50
+REPORT_INTERVAL = 500
 CHECKPOINT_INTERVAL = 1000
 
 """# ***Neural Turing Machine***
@@ -299,9 +299,10 @@ class NTMMemory(nn.Module):
         # memory locations by content
         self.register_buffer('mem_bias', torch.Tensor(N, M))
 
+
         # Initialize memory bias
-        # stdev = 1 / (np.sqrt(N + M))
-        nn.init.constant_(self.mem_bias, 1.0)
+        stdev = 1 / (np.sqrt(N + M))
+        nn.init.uniform_(self.mem_bias, -stdev, stdev)
 
     def reset(self, batch_size):
         """Initialize memory from bias, for start-of-sequence."""
@@ -340,6 +341,7 @@ class NTMMemory(nn.Module):
         :param w_prev: The weighting produced in the previous time step.
         """
         # Content focus
+
         wc = self._similarity(k, β) # wc = [bs, N]
 
         # Location focus
@@ -350,8 +352,11 @@ class NTMMemory(nn.Module):
         return w
 
     def _similarity(self, k, β):
+
         k = k.view(self.batch_size, 1, -1) # k = [bs, 1, M]
+
         w = F.softmax(β * F.cosine_similarity(self.memory + 1e-16, k + 1e-16, dim=-1), dim=1) # sim(Mem[bs, N, M], K[bs, 1, M]) 
+
         return w
 
     def _interpolate(self, w_prev, wc, g):
@@ -365,7 +370,6 @@ class NTMMemory(nn.Module):
 
     def _sharpen(self, ŵ, γ):
         w = ŵ ** γ
-        print("sharpen", w)
         w = torch.div(w, torch.sum(w, dim=1).view(-1, 1) + 1e-16)
         return w
 
@@ -480,7 +484,7 @@ print(date)
 #   date.append(t.split(",")[0])
 # df['date'] = date
 p = df["Avg3(E,25,E,13,E,8)-Avg3"].values
-df['Avg3(E,25,E,13,E,8)-Avg3'] = (p - np.min(p))/(np.max(p) - np.min(p))
+df['Avg3(E,25,E,13,E,8)-Avg3'] = p
 df_gp = df.groupby('date')
 date = np.unique(np.array(date))
 
@@ -526,7 +530,7 @@ def dataloader(num_batches,
         # All batches have the same sequence length
 
         seq = df_gp.get_group(batch_day)["Avg3(E,25,E,13,E,8)-Avg3"].values[::-1]
-
+        seq = (seq - np.min(seq))/(np.max(seq) - np.min(seq))
         seq_len = len(seq)
         seq = seq.reshape(seq_len, batch_size, seq_width)
 
@@ -784,10 +788,10 @@ def train_batch(net, criterion, optimizer, X, Y):
     for i in range(outp_seq_len):
         y_out[i], _ = net()
     y_pred = y_out.permute(1, 0, 2).clone()
-    plt.plot(X.cpu().detach().numpy()[:-1, 0, 0], label = "True")
-    plt.plot(y_out.cpu().detach().numpy()[:, 0, 0], label = "Pred")
-    plt.legend()
-    plt.show()
+    # plt.plot(X.cpu().detach().numpy()[:-1, 0, 0], label = "True")
+    # plt.plot(y_out.cpu().detach().numpy()[:, 0, 0], label = "Pred")
+    # plt.legend()
+    # plt.show()
 
     loss = criterion(y_pred, Y_label)
     lambda1 = 0.2
@@ -797,9 +801,9 @@ def train_batch(net, criterion, optimizer, X, Y):
     
     loss.backward()
     clip_grads(net)
-    plot_grad_flow(net.named_parameters())
-    for n, p in net.named_parameters():
-      print(n, p.grad.norm())
+    # plot_grad_flow(net.named_parameters())
+    # for n, p in net.named_parameters():
+    #   print(n, p.grad)
     
     optimizer.step()
 
@@ -877,11 +881,12 @@ def train_model(model, args):
         seq_lengths += [y.size(0)]
 
         # Update the progress bar
-        # progress_bar(batch_num, args.report_interval, loss)
+        progress_bar(batch_num, args.report_interval, loss)
 
         # Report
         if batch_num % args.report_interval == 0:
             seq = df_gp.get_group("2014/01/02")["Avg3(E,25,E,13,E,8)-Avg3"].values[::-1]
+            seq = (seq - np.min(seq))/(np.max(seq) - np.min(seq))
             seq_len = len(seq)
             seq = seq.reshape(seq_len, batch_size, 1)
             seq = torch.from_numpy(seq.copy())
