@@ -203,7 +203,9 @@ class NTMReadHead(NTMHeadBase):
 
         # Corresponding to k, β, g, s, γ sizes from the paper
         self.read_lengths = [self.M, 1, 1, 3, 1]
-        self.fc_read = nn.Linear(controller_size, sum(self.read_lengths))
+        self.fc_hide = nn.Linear(controller_size, 224)
+        self.fc_read = nn.Linear(224, sum(self.read_lengths))
+        self.relu = nn.ReLU()
         self.reset_parameters()
 
     def create_new_state(self, batch_size):
@@ -223,7 +225,7 @@ class NTMReadHead(NTMHeadBase):
         :param embeddings: input representation of the controller.
         :param w_prev: previous step state
         """
-        o = self.fc_read(embeddings)
+        o = self.fc_read(self.relu(self.fc_hide(embeddings)))
         k, β, g, s, γ = _split_cols(o, self.read_lengths)
         # print("read prev", w_prev)
         # Read from memory
@@ -236,7 +238,8 @@ class NTMReadHead(NTMHeadBase):
 class NTMWriteHead(NTMHeadBase):
     def __init__(self, memory, controller_size):
         super(NTMWriteHead, self).__init__(memory, controller_size)
-
+        self.fc_hide = nn.Linear(controller_size, 224)
+        self.relu = nn.ReLU()
         # Corresponding to k, β, g, s, γ, e, a sizes from the paper
         self.write_lengths = [self.M, 1, 1, 3, 1, self.M, self.M]
         self.fc_write = nn.Linear(controller_size, sum(self.write_lengths))
@@ -259,7 +262,7 @@ class NTMWriteHead(NTMHeadBase):
         :param w_prev: previous step state
         """
         
-        o = self.fc_write(embeddings)
+        o = self.fc_write(self.relu(self.fc_hide(embeddings)))
         k, β, g, s, γ, e, a = _split_cols(o, self.write_lengths)
 
         # e should be in [0, 1]
@@ -389,7 +392,7 @@ class NTM(nn.Module):
               called in controlled by the user (order in list)
         """
         super(NTM, self).__init__()
-
+        self.relu = nn.ReLU()
         # Save arguments
         self.num_inputs = num_inputs
         self.num_outputs = num_outputs
@@ -416,8 +419,10 @@ class NTM(nn.Module):
         assert self.num_read_heads > 0, "heads list must contain at least a single read head"
 
         # Initialize a fully connected layer to produce the actual output:
-        #   [controller_output; previous_reads ] -> output
-        self.fc = nn.Linear(self.controller_size + self.num_read_heads * self.M, num_outputs)
+        #   [controller_output; previous_reads ] -> output]
+        self.fc1 = nn.Linear(self.controller_size + self.num_read_heads * self.M, 512)
+        self.fc2 = nn.Linear(512, num_outputs)
+
         self.reset_parameters()
 
     def create_new_state(self, batch_size):
@@ -434,8 +439,10 @@ class NTM(nn.Module):
 
     def reset_parameters(self):
         # Initialize the linear layer
-        nn.init.xavier_uniform_(self.fc.weight, gain=1)
-        nn.init.normal_(self.fc.bias, std=0.01)
+        nn.init.xavier_uniform_(self.fc1.weight, gain=1)
+        nn.init.normal_(self.fc1.bias, std=0.01)
+        nn.init.xavier_uniform_(self.fc2.weight, gain=1)
+        nn.init.normal_(self.fc2.bias, std=0.01)
 
     def forward(self, x, prev_state):
         """NTM forward function.
@@ -462,7 +469,7 @@ class NTM(nn.Module):
 
         # Generate Output
         inp2 = torch.cat([controller_outp] + reads, dim=1)
-        o = (self.fc(inp2))
+        o = (self.fc2(self.relu(self.fc1(inp2))))
 
         # Pack the current state
         state = (reads, controller_state, heads_states)
@@ -573,13 +580,13 @@ class CopyTaskParams(object):
     # rmsprop_momentum = attrib(default=0.9, convert=float)
     # rmsprop_alpha = attrib(default=0.95, convert=float)
 
-    controller_size = attrib(default=100)
+    controller_size = attrib(default=224)
     controller_layers = attrib(default=1)
     num_heads = attrib(default=1)
     sequence_width = attrib(default=1)
     sequence_min_len = attrib(default=1)
     sequence_max_len = attrib(default=20)
-    memory_n = attrib(default=40)
+    memory_n = attrib(default=400)
     memory_m = attrib(default=20)
     num_batches = attrib(default=50000)
     batch_size = attrib(default=1)
@@ -695,6 +702,7 @@ TASKS = {
     # 'repeat-copy': (RepeatCopyTaskModelTraining, RepeatCopyTaskParams)
 }
 
+
 def plot_grad_flow(named_parameters):
     '''Plots the gradients flowing through different layers in the net during training.
     Can be used for checking for possible gradient vanishing / exploding problems.
@@ -799,10 +807,10 @@ def train_batch(net, criterion, optimizer, X, Y):
     for i in range(outp_seq_len):
         y_out[i], _ = net()
     y_pred = y_out.permute(1, 0, 2).clone()
-    # plt.plot(X.cpu().detach().numpy()[:-1, 0, 0], label = "True")
-    # plt.plot(y_out.cpu().detach().numpy()[:, 0, 0], label = "Pred")
-    # plt.legend()
-    # plt.show()
+    plt.plot(X.cpu().detach().numpy()[:-1, 0, 0], label = "True")
+    plt.plot(y_out.cpu().detach().numpy()[:, 0, 0], label = "Pred")
+    plt.legend()
+    plt.show()
 
     loss = criterion(y_pred, Y_label)
     lambda1 = 0.2
@@ -811,10 +819,10 @@ def train_batch(net, criterion, optimizer, X, Y):
     #loss += l1_regularization
     
     loss.backward()
-    clip_grads(net)
-    # plot_grad_flow(net.named_parameters())
-    # for n, p in net.named_parameters():
-    #   print(n, p.grad)
+    # clip_grads(net)
+    plot_grad_flow(net.named_parameters())
+    for n, p in net.named_parameters():
+      print(n, p.grad.norm())
     
     optimizer.step()
 
