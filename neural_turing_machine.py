@@ -37,7 +37,7 @@ import torch.nn.functional as F
 
 # Default values for program arguments
 RANDOM_SEED = 1000
-REPORT_INTERVAL = 500
+REPORT_INTERVAL = 10
 CHECKPOINT_INTERVAL = 1000
 
 """# ***Neural Turing Machine***
@@ -475,18 +475,29 @@ Copy
 """
 
 import pandas as pd 
-df = pd.read_csv("train10min.csv")
-date = np.unique(df.date.values)
-# date = []
-print(date)
-# timestamp = df.Date
-# for t in timestamp:
-#   date.append(t.split(",")[0])
-# df['date'] = date
-p = df["Avg3(E,25,E,13,E,8)-Avg3"].values
-df['Avg3(E,25,E,13,E,8)-Avg3'] = p
+df = pd.read_csv("finalnifty.csv")
+# date = np.unique(df.date.values)
+date = []
+timestamp = df.Date
+for t in timestamp:
+  date.append(t.split(",")[0])
+df['date'] = date
+p = df.Close.values[::-1]
+
+df.head()
+
+df.drop(0, inplace = True)
+df.reset_index(inplace = True) 
+df.head()
+
+from statsmodels.tsa.api import ExponentialSmoothing, SimpleExpSmoothing, Holt
+# Simple Exponential Smoothing
+y = p
+fit1 = Holt(y).fit(smoothing_level=0.35)
+df['Close'] = fit1.fittedvalues[1:]
 df_gp = df.groupby('date')
 date = np.unique(np.array(date))
+date
 
 """Copy Task NTM model."""
 
@@ -529,7 +540,7 @@ def dataloader(num_batches,
 
         # All batches have the same sequence length
 
-        seq = df_gp.get_group(batch_day)["Avg3(E,25,E,13,E,8)-Avg3"].values[::-1]
+        seq = df_gp.get_group(batch_day)["Close"].values[::-1]
         seq = (seq - np.min(seq))/(np.max(seq) - np.min(seq))
         seq_len = len(seq)
         seq = seq.reshape(seq_len, batch_size, seq_width)
@@ -885,7 +896,7 @@ def train_model(model, args):
 
         # Report
         if batch_num % args.report_interval == 0:
-            seq = df_gp.get_group("2014/01/02")["Avg3(E,25,E,13,E,8)-Avg3"].values[::-1]
+            seq = df_gp.get_group("2020/07/07")["Close"].values[::-1]
             seq = (seq - np.min(seq))/(np.max(seq) - np.min(seq))
             seq_len = len(seq)
             seq = seq.reshape(seq_len, batch_size, 1)
@@ -975,5 +986,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
-ls
